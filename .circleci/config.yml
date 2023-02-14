@@ -1,0 +1,169 @@
+version: 2.1
+
+orbs:
+  jsc-sfdx: jsc/salesforce@0.7.0
+
+parameters:
+  devhubUsername:
+    description: Production username for the DevHub org (production environment)
+    type: string
+    default: your-name@your-domain.com
+  devhubInstanceUrl:
+    description: Production instance URL
+    type: string
+    default: https://your-domain.my.salesforce.com
+  devSandboxUsername:
+    description: Username for the Dev Sandbox (developer integration)
+    type: string
+    default: your-name@your-domain.com.dev
+  qaSandboxUsername:
+    description: Username for the QA sandbox (UAT/Staging environment)
+    type: string
+    default: your-name@your-domain.com.staging
+
+jobs:
+  install_production:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - jsc-sfdx/install
+      - jsc-sfdx/auth:
+          username: << pipeline.parameters.devhubUsername >>
+          instanceUrl: << pipeline.parameters.devhubInstanceUrl >>
+          jwtKey: SFDX_JWT_KEY
+          consumerKey: SFDX_CONSUMER_KEY
+          setDefault: true
+      - jsc-sfdx/auth:
+          instanceUrl: https://test.salesforce.com
+          username: << pipeline.parameters.devSandboxUsername >>
+          jwtKey: SFDX_JWT_KEY
+          consumerKey: SFDX_CONSUMER_KEY_DEV
+      - jsc-sfdx/auth:
+          instanceUrl: https://test.salesforce.com
+          username: << pipeline.parameters.qaSandboxUsername >>
+          jwtKey: SFDX_JWT_KEY
+          consumerKey: SFDX_CONSUMER_KEY_STAGING
+      - jsc-sfdx/package-get-installed:
+          targetOrg: << pipeline.parameters.devhubUsername >>
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+      - jsc-sfdx/package-get-latest-build:
+          releaseCandidateOnly: true
+          packageVersionExport: LATEST_RELEASE_CANDIDATE_BUILD
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+      - jsc-sfdx/package-install:
+          installLatestBuild: false
+          packageVersion: LATEST_RELEASE_CANDIDATE_BUILD
+          targetOrg: << pipeline.parameters.devSandboxUsername >>
+      - jsc-sfdx/package-install:
+          installLatestBuild: false
+          packageVersion: LATEST_RELEASE_CANDIDATE_BUILD
+          targetOrg: << pipeline.parameters.qaSandboxUsername >>
+      - jsc-sfdx/package-promote:
+          promoteLatestBuild: false
+          packageVersionId: LATEST_RELEASE_CANDIDATE_BUILD
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+      - jsc-sfdx/package-install:
+          installLatestBuild: false
+          packageVersion: LATEST_RELEASE_CANDIDATE_BUILD
+          targetOrg: << pipeline.parameters.devhubUsername >>
+      - jsc-sfdx/run-test-suites:
+          targetOrg: << pipeline.parameters.devhubUsername >>
+          outputDir: test-results/apex
+      - jsc-sfdx/package-rollback:
+          packageVersion: INSTALLED_PACKAGE_VERSION_ID
+          targetOrg: << pipeline.parameters.devhubUsername >>
+          when: on_fail
+      - store_test_results:
+          path: test-results
+
+workflows:
+  package_build:
+    jobs:
+      - jsc-sfdx/scratch_org_test:
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+          devhubInstanceUrl: << pipeline.parameters.devhubInstanceUrl >>
+          jwtKey: SFDX_JWT_KEY
+          consumerKey: SFDX_CONSUMER_KEY
+          setupScript: scripts/shell/setup.sh
+          runPrettier: true
+          runLwcTests: true
+          context:
+            - salesforce
+      - jsc-sfdx/build_release_candidate_version:
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+          devhubInstanceUrl: << pipeline.parameters.devhubInstanceUrl >>
+          jwtKey: SFDX_JWT_KEY
+          consumerKey: SFDX_CONSUMER_KEY
+          package: PACKAGE_ID
+          context:
+            - salesforce
+          filters:
+            branches:
+              only:
+                - /^version/.*/
+      - jsc-sfdx/beta_package_deploy:
+          name: "dev_sandbox_deploy"
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+          targetOrgUsername: << pipeline.parameters.devSandboxUsername >>
+          devhubInstanceUrl: << pipeline.parameters.devhubInstanceUrl >>
+          devhubJwtKey: SFDX_JWT_KEY
+          targetOrgJwtKey: SFDX_JWT_KEY
+          devhubConsumerKey: SFDX_CONSUMER_KEY
+          targetOrgConsumerKey: SFDX_CONSUMER_KEY_DEV
+          package: PACKAGE_ID
+          requires:
+            - jsc-sfdx/scratch_org_test
+          context:
+            - salesforce
+          filters:
+            branches:
+              only:
+                - /^version/.*/
+                - /^feature/.*/
+                - /^bugfix/.*/
+                - /^refactor/.*/
+      - approve_qa:
+          type: approval
+          requires:
+            - dev_sandbox_deploy
+          filters:
+            branches:
+              only:
+                - /^version/.*/
+      - jsc-sfdx/beta_package_deploy:
+          name: "qa_sandbox_deploy"
+          devhubUsername: << pipeline.parameters.devhubUsername >>
+          targetOrgUsername: << pipeline.parameters.qaSandboxUsername >>
+          devhubInstanceUrl: << pipeline.parameters.devhubInstanceUrl >>
+          devhubJwtKey: SFDX_JWT_KEY
+          targetOrgJwtKey: SFDX_JWT_KEY
+          devhubConsumerKey: SFDX_CONSUMER_KEY
+          targetOrgConsumerKey: SFDX_CONSUMER_KEY_STAGING
+          package: PACKAGE_ID
+          requires:
+            - approve_qa
+          context:
+            - salesforce
+          filters:
+            branches:
+              only:
+                - /^version/.*/
+      - approve_production:
+          type: approval
+          requires:
+            - qa_sandbox_deploy
+            - jsc-sfdx/build_release_candidate_version
+          filters:
+            branches:
+              only:
+                - /^version/.*/
+      - install_production:
+          context:
+            - salesforce
+          requires:
+            - approve_production
+          filters:
+            branches:
+              only:
+                - /^version/.*/
