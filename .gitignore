@@ -39,3 +39,4 @@ test-results/
 
 # sensitive data
 **/keys.env
+certs/
