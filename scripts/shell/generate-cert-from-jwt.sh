@@ -1,25 +1,19 @@
 #! /bin/bash
 # shellcheck disable=SC1091,SC2154
 
-password=
+jwtpath=certs/server.key
 
-while getopts p: option; do
+while getopts j: option; do
     case "${option}" in
-    p) password=${OPTARG} ;;
+    j) jwtpath=${OPTARG} ;;
     *) ;;
     esac
 done
 
-rm -rf certs
-mkdir -p certs
 source scripts/.config/cert-params.conf
 
-# generate private key file
-openssl genrsa -des3 -passout pass:"$password" -out certs/server.pass.key 2048
-# use the private key file, to create server certificate
-openssl rsa -passin pass:"$password" -in certs/server.pass.key -out certs/server.key
 # create certificate signing request
-openssl req -new -key certs/server.key -out certs/server.csr -subj "$subject"
+openssl req -new -key "$jwtpath" -out certs/server.csr -subj "$subject"
 # generate a self-signed certificate using the server.key and server.csr
 openssl x509 -req -sha256 -days 365 -in certs/server.csr -signkey certs/server.key -out certs/server.crt
 # encode the server.key with base64. This will be used as environment variable in CircleCI

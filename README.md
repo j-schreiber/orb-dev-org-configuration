@@ -2,6 +2,8 @@ This repo contains metadata to configure a fresh Trailhead Org (or Developer Org
 
 # Get Started
 
+2.51.4-8ff4b7e
+
 ## Create a new Trailhead Org
 
 First, visit [your trailhead profile](https://trailhead.salesforce.com/de/users/profiles/orgs) to create a new Playground.
